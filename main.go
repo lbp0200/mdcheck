@@ -28,18 +28,18 @@ func checkFile(path string) error {
 		return fmt.Errorf("读取文件 %s 失败：%w", path, err)
 	}
 
-	checkFencedCodeBlocks(string(content))
-	checkHeaders(string(content))
-	checkLinks(string(content))
-	checkTables(string(content))
-	checkLists(string(content))
-	checkCodeBlockLanguage(string(content))
+	checkFencedCodeBlocks(path, string(content))
+	checkHeaders(path, string(content))
+	checkLinks(path, string(content))
+	checkTables(path, string(content))
+	checkLists(path, string(content))
+	checkCodeBlockLanguage(path, string(content))
 
 	return nil
 }
 
 // checkFencedCodeBlocks 检查未闭合的代码块
-func checkFencedCodeBlocks(content string) {
+func checkFencedCodeBlocks(path, content string) {
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	lineNum := 1
 	inFence := false
@@ -57,7 +57,7 @@ func checkFencedCodeBlocks(content string) {
 		} else if inFence {
 			if strings.Contains(line, "```") {
 				issue := Issue{
-					File:      "",
+					File:      path,
 					Line:      lineNum,
 					Column:    strings.Index(line, "```") + 1,
 					Message:   "代码块中可能包含意外的 ``` 标记",
@@ -70,7 +70,7 @@ func checkFencedCodeBlocks(content string) {
 
 	if inFence {
 		issue := Issue{
-			File:      "",
+			File:      path,
 			Line:      lineNum - 1,
 			Column:    1,
 			Message:   "未闭合的代码块，未找到对应的结束标记 ```",
@@ -81,7 +81,7 @@ func checkFencedCodeBlocks(content string) {
 }
 
 // checkHeaders 检查标题问题
-func checkHeaders(content string) {
+func checkHeaders(path, content string) {
 	headerRegex := regexp.MustCompile(`^#{1,6}\s*$`)
 	headerWithTextRegex := regexp.MustCompile(`^#{1,6}\s+(.+)$`)
 
@@ -91,7 +91,7 @@ func checkHeaders(content string) {
 	for i, line := range lines {
 		if headerRegex.MatchString(line) {
 			issue := Issue{
-				File:      "",
+				File:      path,
 				Line:      i + 1,
 				Column:    1,
 				Message:   "空标题：标题后没有内容",
@@ -107,7 +107,7 @@ func checkHeaders(content string) {
 
 			if _, exists := headerMap[text]; exists {
 				issue := Issue{
-					File:      "",
+					File:      path,
 					Line:      i + 1,
 					Column:    1,
 					Message:   fmt.Sprintf("重复的标题：'%s'", text),
@@ -121,7 +121,7 @@ func checkHeaders(content string) {
 }
 
 // checkLinks 检查链接格式
-func checkLinks(content string) {
+func checkLinks(path, content string) {
 	linkRegex := regexp.MustCompile(`\[(.+?)\]\(([^)\s]+)(?:\s+["\'](.+?)["\'])?\)`)
 
 	matches := linkRegex.FindAllStringSubmatch(content, -1)
@@ -135,7 +135,7 @@ func checkLinks(content string) {
 
 		if !isValidURL(url) {
 			issue := Issue{
-				File:      "",
+				File:      path,
 				Line:      0,
 				Message:   fmt.Sprintf("可能无效的链接：%s", url),
 				Suggestion: "检查链接是否可访问，或使用相对路径",
@@ -163,27 +163,45 @@ func isValidURL(url string) bool {
 }
 
 // checkTables 检查表格格式
-func checkTables(content string) {
+func checkTables(path, content string) {
 	lines := strings.Split(content, "\n")
 
 	for i := 0; i < len(lines)-1; i++ {
 		line := lines[i]
-
-		if strings.Contains(line, "|---|") || strings.Contains(line, "---|") {
-			nextLine := lines[i+1]
-
-			if !isTableRowAligned(line, nextLine) {
-				issue := Issue{
-					File:      "",
-					Line:      i + 2,
-					Column:    1,
-					Message:   "表格行未正确对齐",
-					Suggestion: "确保表格列使用 | 分隔，并且列数一致",
+		
+		// 检查是否是表格分隔行
+		if isTableSeparatorLine(line) {
+			// 检查下一行是否是表格数据行
+			if i+1 < len(lines) && isTableDataLine(lines[i+1]) {
+				// 检查再下一行是否是表格数据行且未对齐
+				if i+2 < len(lines) && isTableDataLine(lines[i+2]) {
+					if !isTableRowAligned(lines[i+1], lines[i+2]) {
+						issue := Issue{
+							File:      path,
+							Line:      i + 3,
+							Column:    1,
+							Message:   "表格行未正确对齐",
+							Suggestion: "确保表格列使用 | 分隔，并且列数一致",
+						}
+						allIssues = append(allIssues, issue)
+					}
 				}
-				allIssues = append(allIssues, issue)
 			}
+			
+			// 跳过下一行（数据行），因为已经检查了
+			i++
 		}
 	}
+}
+
+// isTableSeparatorLine 检查是否是表格分隔行
+func isTableSeparatorLine(line string) bool {
+	return regexp.MustCompile(`\|\s*---\s*\|`).MatchString(line)
+}
+
+// isTableDataLine 检查是否是表格数据行
+func isTableDataLine(line string) bool {
+	return strings.Contains(line, "|") && !strings.Contains(line, "---")
 }
 
 // isTableRowAligned 检查表格行是否对齐
@@ -204,7 +222,7 @@ func countColumns(line string) int {
 }
 
 // checkLists 检查列表格式
-func checkLists(content string) {
+func checkLists(path, content string) {
 	lines := strings.Split(content, "\n")
 
 	inList := false
@@ -222,7 +240,7 @@ func checkLists(content string) {
 				currentIndent := getIndentation(line)
 				if currentIndent != expectedIndent {
 					issue := Issue{
-						File:      "",
+						File:      path,
 						Line:      i + 1,
 						Column:    1,
 						Message:   fmt.Sprintf("列表缩进不一致：期望 %d 个空格，实际 %d 个", expectedIndent, currentIndent),
@@ -250,7 +268,7 @@ func getIndentation(line string) int {
 }
 
 // checkCodeBlockLanguage 检查代码块语言标识
-func checkCodeBlockLanguage(content string) {
+func checkCodeBlockLanguage(path, content string) {
 	lines := strings.Split(content, "\n")
 
 	for i, line := range lines {
@@ -261,7 +279,7 @@ func checkCodeBlockLanguage(content string) {
 
 				if !isKnownLanguage(language) {
 					issue := Issue{
-						File:      "",
+						File:      path,
 						Line:      i + 1,
 						Column:    1,
 						Message:   fmt.Sprintf("未知的代码块语言：%s", language),
