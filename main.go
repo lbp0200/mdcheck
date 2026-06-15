@@ -124,7 +124,7 @@ func printReport(issues []Issue, jsonOutput bool) {
 	}
 }
 
-var version = "0.3.0" // 回退版本（goreleaser 通过 ldflags 覆盖）
+var version = "0.4.0" // 回退版本（goreleaser 通过 ldflags 覆盖）
 
 func programVersion() string {
 	if info, ok := tryReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
