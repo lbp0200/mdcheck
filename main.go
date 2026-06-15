@@ -1,6 +1,7 @@
 package main
 
 import (
+	"debug/buildinfo"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -123,7 +124,22 @@ func printReport(issues []Issue, jsonOutput bool) {
 	}
 }
 
-var version = "0.3.0"
+var version = "0.3.0" // 回退版本（goreleaser 通过 ldflags 覆盖）
+
+func programVersion() string {
+	if info, ok := tryReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
+
+func tryReadBuildInfo() (*buildinfo.BuildInfo, bool) {
+	info, err := buildinfo.ReadFile(os.Args[0])
+	if err != nil {
+		return nil, false
+	}
+	return info, true
+}
 
 func main() {
 	filePath := flag.String("f", "", "指定单个文件")
@@ -135,7 +151,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("mdcheck %s\n", version)
+		fmt.Printf("mdcheck %s\n", programVersion())
 		return
 	}
 
