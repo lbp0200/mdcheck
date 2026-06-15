@@ -9,44 +9,31 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
-    
+        go-version: stable
+
     - name: Build
       run: go build -o mdcheck .
-    
-    - name: Test passing file
+
+    - name: Run unit tests
+      run: go test -v ./...
+
+    - name: Integration tests
       run: |
-        ./mdcheck test_data/passing.md
-        echo "Expected: 0 issues"
-    
-    - name: Test unopened fence
-      run: |
-        ./mdcheck test_data/fail_unopened_fence.md || true
-        echo "Expected: 1 issue (unopened fence)"
-    
-    - name: Test empty header
-      run: |
-        ./mdcheck test_data/fail_empty_header.md || true
-        echo "Expected: 1 issue (empty header)"
-    
-    - name: Test duplicate header
-      run: |
-        ./mdcheck test_data/fail_duplicate_header.md || true
-        echo "Expected: 1 issue (duplicate header)"
-    
-    - name: Test bad table
-      run: |
-        ./mdcheck test_data/fail_bad_table.md || true
-        echo "Expected: 1 issue (bad table)"
-    
-    - name: Test unknown language
-      run: |
-        ./mdcheck test_data/fail_unknown_language.md || true
-        echo "Expected: 2 issues (unknown languages)"
+        echo "=== passing.md ==="
+        ./mdcheck test_data/passing.md && echo "✓ exit 0"
+
+        for f in test_data/fail_*.md; do
+          echo "=== $f ==="
+          if ./mdcheck "$f"; then
+            echo "✗ expected non-zero exit"
+            exit 1
+          fi
+          echo "✓ exit 1 (expected)"
+        done
