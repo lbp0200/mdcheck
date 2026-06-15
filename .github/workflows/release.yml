@@ -27,3 +27,92 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notarize-darwin:
+    needs: goreleaser
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_DEVELOPER_CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 }}
+      APPLE_DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download darwin release assets
+        if: env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --pattern "mdcheck_*_darwin_*" \
+            --dir /tmp/darwin
+          echo "downloaded:"
+          ls -la /tmp/darwin/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install certificate
+        if: env.APPLE_DEVELOPER_CERTIFICATE_P12 != ''
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+
+      - name: Codesign darwin binaries
+        if: env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          mkdir -p /tmp/signed
+          for f in /tmp/darwin/*.tar.gz; do
+            arch_dir="/tmp/build/$(basename "$f" .tar.gz)"
+            mkdir -p "$arch_dir"
+            tar xzf "$f" -C "$arch_dir"
+            binary="$arch_dir/mdcheck"
+            if [ -f "$binary" ]; then
+              codesign -s "$APPLE_SIGNING_IDENTITY" \
+                --options runtime --force --timestamp "$binary"
+              echo "signed: $binary"
+              (cd "$arch_dir" && tar czf "/tmp/signed/$(basename "$f")" .)
+            fi
+          done
+
+      - name: Upload signed assets
+        if: env.APPLE_SIGNING_IDENTITY != ''
+        run: |
+          for f in /tmp/signed/*.tar.gz; do
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notarize via notarytool
+        if: env.APPLE_ID != '' && env.APPLE_TEAM_ID != ''
+        run: |
+          mkdir -p /tmp/notarize
+          for f in /tmp/signed/*.tar.gz; do
+            dir="/tmp/notarize/$(basename "$f" .tar.gz)"
+            mkdir -p "$dir"
+            tar xzf "$f" -C "$dir"
+            binary="$dir/mdcheck"
+            zip="/tmp/notarize/$(basename "$f" .tar.gz).zip"
+            zip -j "$zip" "$binary"
+
+            xcrun notarytool submit "$zip" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+
+            xcrun stapler staple "$binary"
+            (cd "$dir" && tar czf "/tmp/signed/$(basename "$f")" .)
+          done
+
+      - name: Upload notarized assets
+        if: env.APPLE_ID != '' && env.APPLE_TEAM_ID != ''
+        run: |
+          for f in /tmp/signed/*.tar.gz; do
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
